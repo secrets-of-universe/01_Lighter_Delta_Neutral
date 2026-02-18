@@ -1,0 +1,15 @@
+# 01 Exchange (raw protobuf API)
+protobuf>=4.25.0
+cryptography>=41.0.0
+requests>=2.31.0
+base58>=2.1.1
+
+# Lighter DEX
+lighter-sdk>=1.0.0
+
+# Binance WebSocket
+websockets>=12.0
+
+# Utilities
+python-dotenv>=1.0.0
+python-telegram-bot>=21.0

@@ -1,0 +1,9 @@
+.env
+id.json
+__pycache__/
+*.pyc
+schema_pb2.py
+venv/
+.venv/
+config_overrides.json
+*.log
