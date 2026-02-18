@@ -816,8 +816,8 @@ class CycleFarmer:
         unwind_size = abs(lighter_pos)
 
         # Deterministic ID for this cycle's unwind to prevent double-spend
-        # Format: CycleCount + 900000 (offset to avoid collision with randoms)
-        unwind_id = 900000000 + (self.cycle_count * 10) + 1
+        # Use timestamp to ensure uniqueness across bot restarts (prevents DUPLICATE error)
+        unwind_id = int(time.time() * 1000)
         
         logger.info(f"🔓 UNWINDING | {unwind_side.upper()} {unwind_size:.5f} BTC on Lighter (ID: {unwind_id})")
 
@@ -864,7 +864,7 @@ class CycleFarmer:
                     await self._send_alert(msg)
                     
                     # One careful retry with NEW ID (since previous might have failed)
-                    retry_id = unwind_id + 1
+                    retry_id = int(time.time() * 1000) + 7
                     retry_side = "sell" if final_pos > 0 else "buy"
                     await self.lighter.place_taker_order(
                         side=retry_side, 
