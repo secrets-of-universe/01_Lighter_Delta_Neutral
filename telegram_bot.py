@@ -242,6 +242,8 @@ class TelegramBot:
 
     async def cmd_help(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not self._check_auth(update): return
+        
+        # Base commands
         msg = (
             "🤖 **COMMANDS**\n"
             "/start - Start farming\n"
@@ -249,7 +251,11 @@ class TelegramBot:
             "/status - Show bot state & position\n"
             "/balance - Show wallet balances (01 + Lighter)\n"
             "/config - Show current settings\n"
-            "/set - Change a setting (e.g. `/set COOLDOWN_S 120`)\n"
-            "/help - Show this message"
+            "/set - Change a setting (see below)\n"
+            "/help - Show this message\n\n"
         )
+        
+        # Append dynamic settings list
+        msg += config_manager.get_help_text()
+        
         await update.message.reply_text(msg, parse_mode="Markdown")
