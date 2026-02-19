@@ -360,6 +360,23 @@ class CycleFarmer:
         bid_price = round(lighter_bid - offset, 1)
         ask_price = round(lighter_ask + offset, 1)
 
+        # SAFETY: Check 01 BBO to ensure we don't cross the book (Post-Only fail)
+        # If our calculated price crosses the existing book, clamp it to "Join" or "Improve" without taking.
+        try:
+            o1_bid, o1_ask = self.o1.get_best_bid_ask()
+            tick_size = 0.1  # BTCUSD on 01 usually 0.1 tick
+
+            if o1_ask > 0 and bid_price >= o1_ask:
+                logger.info(f"⚠️ Calculated BID (${bid_price}) crosses 01 ASK (${o1_ask}). Clamping to Maker level.")
+                bid_price = o1_ask - tick_size
+
+            if o1_bid > 0 and ask_price <= o1_bid:
+                logger.info(f"⚠️ Calculated ASK (${ask_price}) crosses 01 BID (${o1_bid}). Clamping to Maker level.")
+                ask_price = o1_bid + tick_size
+                
+        except Exception as e:
+            logger.warning(f"Failed to fetch 01 BBO/clamp prices: {e}")
+
         # Place on locked side only, or both sides for initial order
         try:
             if locked_side == "bid":
@@ -382,15 +399,38 @@ class CycleFarmer:
                     f"   Placing on 01: BID ${bid_price:,.1f} / ASK ${ask_price:,.1f} "
                     f"× {self.open_size:.5f} BTC"
                 )
-                self.bid_order_id = self.o1.place_limit_order("bid", bid_price, self.open_size, post_only=True)
-                self.ask_order_id = self.o1.place_limit_order("ask", ask_price, self.open_size, post_only=True)
+                # Place each side independently — if one fails POST_ONLY, keep the other
+                try:
+                    self.bid_order_id = self.o1.place_limit_order("bid", bid_price, self.open_size, post_only=True)
+                except Exception as bid_err:
+                    if "POST_ONLY" in str(bid_err):
+                        logger.warning(f"⚠️ BID crossed book (Post-Only). Skipping bid side.")
+                        self.bid_order_id = None
+                    else:
+                        raise
+                
+                try:
+                    self.ask_order_id = self.o1.place_limit_order("ask", ask_price, self.open_size, post_only=True)
+                except Exception as ask_err:
+                    if "POST_ONLY" in str(ask_err):
+                        logger.warning(f"⚠️ ASK crossed book (Post-Only). Skipping ask side.")
+                        self.ask_order_id = None
+                    else:
+                        raise
+                
+                # If BOTH sides failed, wait and retry
+                if self.bid_order_id is None and self.ask_order_id is None:
+                    logger.warning("⚠️ Both sides crossed book. Waiting 3s before retry...")
+                    await asyncio.sleep(3)
+                    return False
         except Exception as e:
             error_str = str(e)
             
-            # 1. Post-Only Error: Price crossed book (Transient). Retry.
+            # 1. Post-Only Error: Price crossed book (Transient). Retry with delay.
             if "POST_ONLY" in error_str:
                 self._cancel_open_orders()
-                logger.warning(f"⚠️ Limit order crossed book (Post-Only). Retrying cycle...")
+                logger.warning(f"⚠️ Limit order crossed book (Post-Only). Waiting 2s before retry...")
+                await asyncio.sleep(2)
                 return False
 
             # 2. Critical Errors: Margin, Risk, Unhealthy. Pause bot.

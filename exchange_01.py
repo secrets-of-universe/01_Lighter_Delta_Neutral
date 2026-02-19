@@ -194,8 +194,10 @@ class Exchange01Client:
         size_raw = int(size * (10 ** m["size_decimals"]))
 
         server_time = self._get_server_timestamp()
+        self._nonce += 1
         action = schema_pb2.Action()
         action.current_timestamp = server_time
+        action.nonce = self._nonce
         action.place_order.session_id = self.session_id
         action.place_order.market_id = config.O1_MARKET_ID
         action.place_order.side = (
@@ -230,8 +232,10 @@ class Exchange01Client:
         self._ensure_session()
         server_time = self._get_server_timestamp()
 
+        self._nonce += 1
         action = schema_pb2.Action()
         action.current_timestamp = server_time
+        action.nonce = self._nonce
         action.cancel_order_by_id.session_id = self.session_id
         action.cancel_order_by_id.order_id = order_id
 
@@ -255,8 +259,10 @@ class Exchange01Client:
         m = self.market_info[config.O1_MARKET_ID]
         server_time = self._get_server_timestamp()
 
+        self._nonce += 1
         action = schema_pb2.Action()
         action.current_timestamp = server_time
+        action.nonce = self._nonce
         action.atomic.session_id = self.session_id
 
         # Cancels first (required ordering for same market)
