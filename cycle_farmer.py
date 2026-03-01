@@ -467,29 +467,41 @@ class CycleFarmer:
             delta = current_pos - initial_pos
 
             if abs(delta) > 0.00001:
-                # Fill detected! Determine side from direction
-                if delta > 0:
-                    self.open_side = "bid"
-                    self.open_price = bid_price
-                else:
-                    self.open_side = "ask"
-                    self.open_price = ask_price
-
-                # Cancel ALL orders immediately
+                # Cancel ALL orders immediately to prevent further fills
+                logger.info("Fill detected! Cancelling remaining orders...")
                 self._cancel_open_orders()
+                
+                # Wait briefly for cancels to process and any in-flight fills to settle
+                await asyncio.sleep(1)
+                
+                # RE-CHECK position to get the FINAL size to hedge
+                final_pos = self.o1.get_position()
+                final_delta = final_pos - initial_pos
+                
+                if abs(final_delta) > 0.00001:
+                    if final_delta > 0:
+                        self.open_side = "bid"
+                        self.open_price = bid_price
+                    else:
+                        self.open_side = "ask"
+                        self.open_price = ask_price
 
-                # Hedge FAST — use first detected delta, correct later
-                self.open_size = abs(delta)
-                self._pre_open_pos = initial_pos  # Save for correction check
+                    # Hedge EXACTLY the final delta we are exposed to
+                    self.open_size = abs(final_delta)
+                    self._pre_open_pos = initial_pos  # Save for correction check
 
-                msg = (
-                    f"🔔 FILL! {self.open_side.upper()} {self.open_size:.5f} BTC "
-                    f"@ ~${self.open_price:,.1f} on 01"
-                )
-                logger.info(msg)
-                await self._send_alert(msg)
+                    msg = (
+                        f"🔔 FILL! {self.open_side.upper()} {self.open_size:.5f} BTC "
+                        f"@ ~${self.open_price:,.1f} on 01"
+                    )
+                    logger.info(msg)
+                    await self._send_alert(msg)
 
-                return True
+                    return True
+                else:
+                    # Rare: The fill reversed or was anomalous, resume loop
+                    logger.warning("Fill vanished after cancel wait. Resuming...")
+                    return False
 
             # THEN check timeout
             if elapsed > config.ORDER_TIMEOUT_S:
@@ -975,13 +987,28 @@ class CycleFarmer:
     # ─── Helpers ─────────────────────────────────────────────────────────────
 
     def _cancel_open_orders(self):
-        """Cancel any active opening orders."""
+        """Cancel any active opening orders with retries."""
         for oid in [self.bid_order_id, self.ask_order_id]:
             if oid is not None:
-                try:
-                    self.o1.cancel_order(oid)
-                except Exception as e:
-                    logger.debug(f"Cancel failed (may already be filled): {e}")
+                success = False
+                for attempt in range(3):
+                    try:
+                        self.o1.cancel_order(oid)
+                        success = True
+                        break  # Cancel succeeded
+                    except Exception as e:
+                        err_str = str(e)
+                        if "ORDER_NOT_FOUND" in err_str or "FILLED" in err_str.upper():
+                            logger.debug(f"Cancel skipped (already filled/missing): {oid}")
+                            success = True
+                            break
+                        
+                        logger.warning(f"⚠️ Cancel failed for {oid} (attempt {attempt+1}/3): {e}")
+                        time.sleep(0.5)  # Blocking sleep is okay here for emergency cancel safety
+                
+                if not success:
+                    logger.error(f"🚨 FAILED TO CANCEL ORDER {oid} AFTER 3 ATTEMPTS! Possible orphan.")
+                    
         self.bid_order_id = None
         self.ask_order_id = None
 
